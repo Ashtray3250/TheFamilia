@@ -15,6 +15,7 @@
  * volume the game set itself. Doppler and cones are not modelled.
  */
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,11 +28,28 @@ FAM_DEFINE_IFACE(DSB8, IDirectSoundBuffer8, IDIRECTSOUNDBUFFER8)
 FAM_DEFINE_IFACE(DS3D, IDirectSound3DBuffer, IDIRECTSOUND3DBUFFER)
 FAM_DEFINE_IFACE(DSL, IDirectSound3DListener, IDIRECTSOUND3DLISTENER)
 
+/* [music-fix] LS3DF's Ogg streamer (IShow::Open, 0x10073ba0) requires
+ * IDirectSoundNotify: without it the music buffer is never refilled and the
+ * game silently gives up on the stream. The interface is tiny, so declare its
+ * four slots here instead of adding a generated header. */
+#define IDIRECTSOUNDNOTIFY_FOR_EACH(X, P) X(P, 0) X(P, 1) X(P, 2) X(P, 3)
+static const char *const IDirectSoundNotify_slot_names[] = {
+    "QueryInterface", "AddRef", "Release", "SetNotificationPositions" };
+static const unsigned char IDirectSoundNotify_slot_argc[] = { 3, 1, 1, 3 };
+#define IDIRECTSOUNDNOTIFY_SLOTS 4
+FAM_DEFINE_IFACE(DSN, IDirectSoundNotify, IDIRECTSOUNDNOTIFY)
+
 #define DS_OK 0u
 #define DSBCAPS_CTRL3D 0x10u
 #define DS3DMODE_NORMAL 0u
 #define DS3DMODE_HEADRELATIVE 1u
 #define DS3DMODE_DISABLE 2u
+#define IID_NOTIFY 0xB0210783u          /* IID_IDirectSoundNotify */
+#define DSERR_INVALIDPARAM 0x80070057u
+#define DSBPN_OFFSETSTOP 0xFFFFFFFFu
+#define MAX_NOTIFY 64                   /* Mafia uses 11 or 22 positions */
+
+static void f_b_Release(void);          /* used by the notify object's Release */
 
 typedef struct {
     uint32_t buf;              /* win32hle buffer object */
@@ -41,6 +59,9 @@ typedef struct {
     float pos[3], minD, maxD;
     uint32_t mode;
     int playing;               /* in g_play[] */
+    uint32_t objnotify;        /* our IDirectSoundNotify object */
+    struct { uint32_t offset, event; } notify[MAX_NOTIFY];
+    uint16_t notify_n;
 } sbuf;
 
 /* Indexed by win32hle's buffer slot (stored at object +8), same capacity as
@@ -50,6 +71,7 @@ typedef struct {
 static sbuf g_b[MAXB];
 static uint16_t g_play[MAXB];
 static int g_nplay;
+static pthread_mutex_t g_notify_lock = PTHREAD_MUTEX_INITIALIZER;   /* [music-fix] */
 int hle_dsound_is_playing(uint32_t self);
 int hle_dsound_alive(uint32_t self);
 static struct { float pos[3], front[3], top[3], rolloff, dist_factor; uint32_t obj; } g_l = {
@@ -73,6 +95,76 @@ static void call2(const char *name, uint32_t obj, uint32_t a) { uint32_t args[2]
 static sbuf *find(uint32_t buf) {
     uint32_t slot = buf ? MEM32(buf + 8) : MAXB;
     return slot < MAXB && g_b[slot].buf == buf ? &g_b[slot] : NULL;
+}
+
+/* [music-fix] IDirectSoundNotify. Mafia's Ogg player asks the streaming
+ * buffer for this interface, registers one event per buffer position and
+ * waits on it in OggThreadProc (0x10073fe0) to refill the played section.
+ * The SDL mixer signals those events from hle_dsound_notify_fire(). */
+static sbuf *ofnotify(void) {
+    uint32_t b = (uint32_t)(uintptr_t)fam_com_host(A32(0));
+    return b ? find(b) : NULL;
+}
+static void n_QueryInterface(void) {                 /* (this, riid, out**) */
+    uint32_t iid = MEM32(A32(1)), out = A32(2), self = A32(0);
+    if (iid == IID_NOTIFY || iid == 0) {
+        uint32_t b = (uint32_t)(uintptr_t)fam_com_host(self);
+        if (b) MEM32(b + 4)++;                      /* shared with the buffer */
+        if (out) MEM32(out) = self;
+        RET(DS_OK, 3);
+    }
+    if (out) MEM32(out) = 0;
+    RET(E_NOINTERFACE, 3);
+}
+static void n_AddRef(void) {                         /* (this) */
+    uint32_t b = (uint32_t)(uintptr_t)fam_com_host(A32(0));
+    RET(b ? ++MEM32(b + 4) : 0, 1);
+}
+static void n_Release(void) {                        /* (this): release the buffer */
+    uint32_t b = (uint32_t)(uintptr_t)fam_com_host(A32(0));
+    if (!b) RET(0, 1);
+    MEM32(g_esp + 4) = b;
+    f_b_Release();                                  /* pops one stdcall argument */
+}
+static void n_SetNotificationPositions(void) {      /* (this, count, DSBPOSITIONNOTIFY*) */
+    sbuf *s = ofnotify();
+    uint32_t n = A32(1), list = A32(2), i, keep;
+    if (!s) RET(DSERR_INVALIDPARAM, 3);
+    pthread_mutex_lock(&g_notify_lock);
+    keep = n < MAX_NOTIFY ? n : MAX_NOTIFY;
+    s->notify_n = 0;
+    for (i = 0; i < keep; i++) {
+        uint32_t e = list + (uint32_t)(8 * i);
+        s->notify[i].offset = MEM32(e);
+        s->notify[i].event = MEM32(e + 4);
+    }
+    s->notify_n = (uint16_t)keep;
+    pthread_mutex_unlock(&g_notify_lock);
+    RET(DS_OK, 3);
+}
+
+/* Called by the SDL audio thread in dsound.c while the buffer's play cursor
+ * moves. `from`/`to` are frame indices inside the loop; `whole` means a whole
+ * buffer was consumed between two mixer callbacks. */
+void hle_dsound_notify_fire(uint32_t slot, uint32_t from, uint32_t to, int whole,
+                            uint32_t bytes, int looping) {
+    if (slot >= MAXB || !bytes) return;
+    sbuf *s = &g_b[slot];
+    if (!s->buf || !s->notify_n) return;
+    struct { uint32_t offset, event; } list[MAX_NOTIFY];
+    uint16_t n, i;
+    pthread_mutex_lock(&g_notify_lock);
+    n = s->notify_n;
+    if (n) memcpy(list, s->notify, (size_t)n * sizeof list[0]);
+    pthread_mutex_unlock(&g_notify_lock);
+    for (i = 0; i < n; i++) {
+        uint32_t off = list[i].offset, h = list[i].event;
+        int fire = whole;
+        if (off == DSBPN_OFFSETSTOP) fire = !looping && whole;
+        else if (!whole) fire = from <= to ? (off > from && off <= to)
+                                          : (off > from || off <= to);
+        if (fire && h) { mach_enter(); hle_set_event(h); mach_leave(); }
+    }
 }
 static void play_remove(sbuf *s) {
     if (!s->playing) return;
@@ -226,6 +318,14 @@ static void f_b_QueryInterface(void) {                /* (this, riid, out**) */
         MEM32(self + 4)++;
         MEM32(out) = g_l.obj; RET(DS_OK, 3);
     }
+    /* [music-fix] The Ogg streamer must have this or IShow::Open fails and
+     * there is no music at all, in menus, cutscenes or the city. */
+    if (iid == IID_NOTIFY && !s) s = track(self, 0);
+    if (iid == IID_NOTIFY && s) {
+        if (!s->objnotify) s->objnotify = fam_com_new(&DSN_iface, (void *)(uintptr_t)self);
+        MEM32(self + 4)++;
+        if (out) MEM32(out) = s->objnotify; RET(DS_OK, 3);
+    }
     {   /* refused: say which interface, once per IID */
         static uint32_t seen[16]; static int ns; int k = 0;
         while (k < ns && seen[k] != iid) k++;
@@ -255,7 +355,15 @@ static void f_b_Release(void) {
     if (MEM32(self + 4) == 1) {
         uint64_t z = 0;
         sbuf *s = find(self);
-        if (s) { if (s->obj3d) memcpy(hle_ptr(s->obj3d + 8), &z, 8); s->buf = 0; }
+        if (s) {
+            if (s->obj3d) memcpy(hle_ptr(s->obj3d + 8), &z, 8);
+            if (s->objnotify) memcpy(hle_ptr(s->objnotify + 8), &z, 8);
+            pthread_mutex_lock(&g_notify_lock);
+            s->notify_n = 0;
+            s->objnotify = 0;
+            pthread_mutex_unlock(&g_notify_lock);
+            s->buf = 0;
+        }
         if (g_l.obj && (uint32_t)(uintptr_t)fam_com_host(g_l.obj) == self) memcpy(hle_ptr(g_l.obj + 8), &z, 8);
     }
     f_b_Release_raw();
@@ -374,6 +482,10 @@ static void build_vtables(void) {
         { IDIRECTSOUND3DBUFFER_SetMaxDistance, d3_SetMaxDistance }, { IDIRECTSOUND3DBUFFER_GetMaxDistance, d3_GetMaxDistance },
         { IDIRECTSOUND3DBUFFER_SetMode, d3_SetMode }, { IDIRECTSOUND3DBUFFER_GetMode, d3_GetMode },
         { IDIRECTSOUND3DBUFFER_SetAllParameters, d3_SetAllParameters }, { 0, 0 } };
+    /* [music-fix] IDirectSoundNotify: the Ogg streamer's refill events. */
+    static const fam_method n[] = {
+        { 0, n_QueryInterface }, { 1, n_AddRef }, { 2, n_Release },
+        { 3, n_SetNotificationPositions }, { 0, 0 } };
     static const fam_method l[] = {
         { IDIRECTSOUND3DLISTENER_QueryInterface, d3_QueryInterface },
         { IDIRECTSOUND3DLISTENER_GetAllParameters, l_GetAllParameters }, { IDIRECTSOUND3DLISTENER_SetAllParameters, l_SetAllParameters },
@@ -386,6 +498,7 @@ static void build_vtables(void) {
     g_b_vt = fam_iface_vtable(&DSB8_iface, b);
     fam_iface_vtable(&DS3D_iface, d3);
     fam_iface_vtable(&DSL_iface, l);
+    fam_iface_vtable(&DSN_iface, n);
 }
 
 static void s_DirectSoundCreate8(void) {   /* (guid, IDirectSound8**, outer) */

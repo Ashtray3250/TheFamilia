@@ -44,6 +44,7 @@ static void v_Reset(void) {                         /* (this, pp*) */
 
 /* --- Present: the default framebuffer is the back buffer --- */
 void fam_present_hook(void);   /* frame pacing / overlay / profiler (frame.c) */
+void fam_apply_write_masks(void);
 static void v_Present(void) {                       /* (this, src, dst, hwnd, dirty) */
     fam_present_hook();
     /* bars around the 4:3 picture stay black */
@@ -69,7 +70,6 @@ static void v_BeginScene(void) { g_dev.in_scene = 1; RET(D3D_OK, 1); }
 static void v_EndScene(void)   { g_dev.in_scene = 0; RET(D3D_OK, 1); }
 
 void fam_apply_viewport(void);
-void fam_apply_write_masks(void);
 static void v_Clear(void) {                         /* (this, count, rects, flags, color, z, stencil) */
     uint32_t flags = A32(3), color = A32(4), stencil = A32(6);
     float z; uint32_t zb = A32(5); memcpy(&z, &zb, 4);

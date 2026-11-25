@@ -13,6 +13,8 @@
 #include "d3d8_slots.h"
 #include "d3d8_internal.h"
 
+void fam_texture_unbind_gl(uint32_t gl);
+
 FAM_DEFINE_IFACE(Tex, IDirect3DTexture8, IDIRECT3DTEXTURE8)
 FAM_DEFINE_IFACE(Surf, IDirect3DSurface8, IDIRECT3DSURFACE8)
 FAM_DEFINE_IFACE(VB, IDirect3DVertexBuffer8, IDIRECT3DVERTEXBUFFER8)
@@ -252,8 +254,34 @@ static int g_active = -1;
 void fam_resource_invalidate_gl(void) { for (int i = 0; i < 8; i++) g_bound[i] = ~0u; g_active = -1; }
 static void active_unit(int unit) { if (g_active != unit) { glActiveTexture(GL_TEXTURE0 + unit); g_active = unit; } }
 void fam_texture_unbind_gl(uint32_t gl) { for (int i = 0; i < 8; i++) if (g_bound[i] == gl) g_bound[i] = 0; }
+
+/* D3D: sampling a stage whose texture is NULL returns opaque white. GLES has
+ * no such guarantee for texture object 0: an incomplete/unbound texture is
+ * black, which made untextured vertex-coloured geometry (radar blips, lines,
+ * HUD markers) come out black when the stage was left on MODULATE. */
+static uint32_t g_white_tex;
+static uint32_t white_texture(void) {
+    if (!g_white_tex) {
+        static const uint8_t white[4] = { 255, 255, 255, 255 };
+        int prev = g_active;
+        glGenTextures(1, &g_white_tex);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, g_white_tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        if (prev >= 0) glActiveTexture(GL_TEXTURE0 + prev);
+        g_active = prev;
+        for (int i = 0; i < 8; i++) g_bound[i] = ~0u;   /* the white texture was bound behind the cache */
+    }
+    return g_white_tex;
+}
+
 void fam_texture_bind(fam_texture *t, int unit) {
-    uint32_t want = t ? t->gl : 0;
+    uint32_t want = t ? t->gl : white_texture();
     if (t && !t->gl) {
         active_unit(unit);
         glGenTextures(1, &t->gl);

@@ -128,18 +128,30 @@ static void mix(void *ud, Uint8 *stream, int len) {
         dsbuf *b = g_buf[i];
         if (!b || !b->playing || b->primary || !b->block) continue;
         uint32_t nframes = b->bytes / (uint32_t)b->block;
+        uint32_t blk = (uint32_t)b->block;
         double step = (double)b->rate / OUT_RATE;
+        uint32_t seg = (uint32_t)b->pos;                 /* [music-fix] byte-offset span already played */
         for (int f = 0; f < frames && b->playing; f++) {
             uint32_t at = (uint32_t)b->pos;
             if (at >= nframes) {
-                if (b->looping) { b->pos -= nframes; at = (uint32_t)b->pos; if (at >= nframes) b->pos = 0, at = 0; }
-                else { b->playing = 0; b->pos = 0; break; }
+                if (b->looping) {
+                    /* the play cursor wrapped: every notify position in
+                     * [seg, nframes) has just been passed */
+                    hle_dsound_notify_fire((uint32_t)i, seg * blk, b->bytes, 0, b->bytes, 1);
+                    b->pos -= nframes; at = (uint32_t)b->pos; if (at >= nframes) b->pos = 0, at = 0;
+                    seg = 0;
+                } else { b->playing = 0; b->pos = 0; break; }
             }
             float l = sample(b, at, 0), r = b->channels > 1 ? sample(b, at, 1) : l;
             acc[2 * f] += l * b->gl;
             acc[2 * f + 1] += r * b->gr;
             b->pos += step;
         }
+        /* [music-fix] notify the positions reached since the last wrap */
+        if (b->playing && (uint32_t)b->pos > seg)
+            hle_dsound_notify_fire((uint32_t)i, seg * blk, (uint32_t)b->pos * blk, 0, b->bytes, b->looping);
+        else if (!b->playing && !b->looping)
+            hle_dsound_notify_fire((uint32_t)i, 0, 0, 1, b->bytes, 0);   /* DSBPN_OFFSETSTOP */
     }
     for (int i = 0; i < MAX_STREAMS; i++) {
         if (!g_stream[i].used) continue;
