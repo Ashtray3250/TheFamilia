@@ -43,8 +43,8 @@ tools/build_ffmpeg.sh
 PCRECOMP=/path/to/pcrecomp python3 -P tools/translate.py /path/to/game-files
 
 # 4. Сборка
-docker run --rm -u $(id -u):$(id -g) -v $PWD:/src -w /src familia-cross:bookworm \
-    make ARCH=aarch64 -j$(nproc) build/aarch64/familia launcher import
+docker run --rm -u $(id -u):$(id -g) -v /absolute/path/to/TheFamilia:/src -w /src \
+    familia-cross:bookworm make ARCH=aarch64 -j1 build/aarch64/familia launcher import
 
 # 5. Упаковка
 tools/package.sh build/aarch64/familia
@@ -69,11 +69,24 @@ tools/package.sh build/aarch64/familia
 - **Не пользоваться/latest `pcrecomp` main без нужды.** Новые версии lifter'а
   генерируют `RECOMP_TRAP` / `fp_bcd_st`, которых нет во вендорированном
   `recomp32/recomp_types.h`; это маскируется костылями и меняет код.
+- `-j$(nproc)` может убить `cc1` по памяти (особенно в WSL). Проверенная
+  сборка делалась с `-j1`; это медленнее, но надёжно.
+- При запуске Docker из PowerShell/WSL подставляйте **абсолютный** путь
+  `-v /root/TheFamilia:/src`. Подстановка `$PWD` через middleware оболочки
+  может смонтировать совсем другую папку — тогда make пишет
+  `No rule to make target 'build/aarch64/familia'`.
 - Известная мелочь: транслятор может не находить `rw_data!110025C0`
-  (`native_rwdata.c` ссылается на `recomp_rw_data_110025C0_orig`). Рабочий
-  обход — добавить `config/seeds/rw_data.json` с `"0x110025C0"`. Прежде чем
-  добавлять, проверьте, не находится ли функция естественным путём в вашей
-  версии транслятора.
+  (`native_rwdata.c` ссылается на `recomp_rw_data_110025C0_orig`). В форке
+  уже лежит `config/seeds/rw_data.json` с `"0x110025C0"` — не удаляйте его
+  без проверки.
+
+## Фактически удачная сборка (2026-11-25)
+
+Среда: WSL2 Ubuntu + Docker Engine, образ `familia-cross:bookworm`,
+pcrecomp `8091c57`, `-j1`. Результат:
+`dist/the_familia.zip` (~115 МБ, 34 файла), stripped
+`dist/stage/the_familia/familia.aarch64` ~279 МБ. Сборка прошла без ошибок;
+дальнейшая проверка — только на устройстве RG40XXH с muOS.
 
 ## Обязательная проверка перед передачей бинарника
 
