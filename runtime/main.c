@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "win32hle.h"
+#include "recomp_types.h"
 #include "host.h"
 #include "loader.h"
 #include "familia.h"
@@ -31,6 +32,11 @@ void recomp_unresolved(uint32_t va, uint32_t from, const char *kind) {
     if (cont < 0) { const char *e = getenv("FAMILIA_UNRESOLVED_CONTINUE"); cont = !e || atoi(e) != 0; }
     fprintf(stderr, "%s: unresolved VA 0x%08X from 0x%08X\n", kind, va, from);
     if (!cont) hle_fatal("no translated function at 0x%08X (%s from 0x%08X)", va, kind, from);
+    /* Match the stub the shipped build emits for such targets: flag it and
+     * consume the call's return address, otherwise the caller's stack stays
+     * unbalanced and later COM vtables read garbage. */
+    *(volatile uint8_t *)ADDR(0x11012C98u) = 1;
+    g_esp += 4;
 }
 void recomp_lift_failed(uint32_t va) { hle_fatal("function 0x%08X failed to lift", va); }
 
