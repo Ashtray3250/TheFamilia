@@ -123,6 +123,7 @@ static void mix(void *ud, Uint8 *stream, int len) {
     static float acc[2 * 8192];
     if (frames > 8192) frames = 8192;
     memset(acc, 0, sizeof(float) * 2 * (size_t)frames);
+    uint32_t notify_ev[256]; int notify_n = 0;   /* [music-fix] signaled after unlocking */
     pthread_mutex_lock(&g_mix);
     for (int i = 0; i < MAX_BUFS; i++) {
         dsbuf *b = g_buf[i];
@@ -137,7 +138,8 @@ static void mix(void *ud, Uint8 *stream, int len) {
                 if (b->looping) {
                     /* the play cursor wrapped: every notify position in
                      * [seg, nframes) has just been passed */
-                    hle_dsound_notify_fire((uint32_t)i, seg * blk, b->bytes, 0, b->bytes, 1);
+                    notify_n += hle_dsound_notify_fire((uint32_t)i, seg * blk, b->bytes, 0, b->bytes, 1,
+                                                       notify_ev + notify_n, 256 - notify_n);
                     b->pos -= nframes; at = (uint32_t)b->pos; if (at >= nframes) b->pos = 0, at = 0;
                     seg = 0;
                 } else { b->playing = 0; b->pos = 0; break; }
@@ -149,9 +151,11 @@ static void mix(void *ud, Uint8 *stream, int len) {
         }
         /* [music-fix] notify the positions reached since the last wrap */
         if (b->playing && (uint32_t)b->pos > seg)
-            hle_dsound_notify_fire((uint32_t)i, seg * blk, (uint32_t)b->pos * blk, 0, b->bytes, b->looping);
+            notify_n += hle_dsound_notify_fire((uint32_t)i, seg * blk, (uint32_t)b->pos * blk, 0, b->bytes, b->looping,
+                                               notify_ev + notify_n, 256 - notify_n);
         else if (!b->playing && !b->looping)
-            hle_dsound_notify_fire((uint32_t)i, 0, 0, 1, b->bytes, 0);   /* DSBPN_OFFSETSTOP */
+            notify_n += hle_dsound_notify_fire((uint32_t)i, 0, 0, 1, b->bytes, 0,
+                                               notify_ev + notify_n, 256 - notify_n);   /* DSBPN_OFFSETSTOP */
     }
     for (int i = 0; i < MAX_STREAMS; i++) {
         if (!g_stream[i].used) continue;
@@ -165,6 +169,10 @@ static void mix(void *ud, Uint8 *stream, int len) {
         }
     }
     pthread_mutex_unlock(&g_mix);
+    /* Signal after releasing g_mix: no lock inversion with guest shims. */
+    for (int i = 0; i < notify_n; i++) {
+        mach_enter(); hle_set_event(notify_ev[i]); mach_leave();
+    }
     int16_t *out = (int16_t *)stream;
     for (int k = 0; k < 2 * frames; k++) {
         float v = acc[k] * g_master * 32767.0f;

@@ -146,25 +146,31 @@ static void n_SetNotificationPositions(void) {      /* (this, count, DSBPOSITION
 /* Called by the SDL audio thread in dsound.c while the buffer's play cursor
  * moves. `from`/`to` are frame indices inside the loop; `whole` means a whole
  * buffer was consumed between two mixer callbacks. */
-void hle_dsound_notify_fire(uint32_t slot, uint32_t from, uint32_t to, int whole,
-                            uint32_t bytes, int looping) {
-    if (slot >= MAXB || !bytes) return;
+/* Called by the SDL audio thread. Do NOT signal here: the caller holds the
+ * mixer mutex, and taking the machine lock in that order deadlocks against a
+ * guest thread inside a DirectSound shim (which holds the machine lock and
+ * waits for the mixer mutex). Append handles instead; the caller signals them
+ * after unlocking. */
+int hle_dsound_notify_fire(uint32_t slot, uint32_t from, uint32_t to, int whole,
+                           uint32_t bytes, int looping, uint32_t *out, int cap) {
+    if (slot >= MAXB || !bytes || cap <= 0) return 0;
     sbuf *s = &g_b[slot];
-    if (!s->buf || !s->notify_n) return;
+    if (!s->buf || !s->notify_n) return 0;
     struct { uint32_t offset, event; } list[MAX_NOTIFY];
-    uint16_t n, i;
+    uint16_t n, i; int k = 0;
     pthread_mutex_lock(&g_notify_lock);
     n = s->notify_n;
     if (n) memcpy(list, s->notify, (size_t)n * sizeof list[0]);
     pthread_mutex_unlock(&g_notify_lock);
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n && k < cap; i++) {
         uint32_t off = list[i].offset, h = list[i].event;
         int fire = whole;
         if (off == DSBPN_OFFSETSTOP) fire = !looping && whole;
         else if (!whole) fire = from <= to ? (off > from && off <= to)
                                           : (off > from || off <= to);
-        if (fire && h) { mach_enter(); hle_set_event(h); mach_leave(); }
+        if (fire && h) out[k++] = h;
     }
+    return k;
 }
 static void play_remove(sbuf *s) {
     if (!s->playing) return;
