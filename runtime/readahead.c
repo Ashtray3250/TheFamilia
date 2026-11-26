@@ -172,9 +172,7 @@ static long mem_available_mb(void) {
 
 /* read one list's blocks ahead; stops early when another list is asked for */
 static void read_list(int k) {
-    /* 64 MB is enough to hide most SD-card latency without pushing a 1 GB
-     * handheld into the OOM killer during a mission load. */
-    uint64_t budget = (uint64_t)fam_config_int("readahead_mb", 64) << 20, done = 0, blocks = 0;
+    uint64_t budget = (uint64_t)fam_config_int("readahead_mb", 256) << 20, done = 0, blocks = 0;
     uint64_t t0 = now_ns();
     static uint8_t buf[BLOCK];
     pthread_mutex_lock(&g_mu); int na = g_na; char key[48]; snprintf(key, sizeof key, "%s", g_k[k].key); pthread_mutex_unlock(&g_mu);

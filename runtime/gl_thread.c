@@ -241,7 +241,7 @@ static void *gl_thread(void *arg) {
 
 /* After the device and its GL resources exist (context current here). */
 void fam_glt_start(void) {
-    if (!fam_config_int("glthread", 0)) { fprintf(stderr, "[glthread] off\n"); return; }
+    if (!fam_config_int("glthread", 1)) { fprintf(stderr, "[glthread] off\n"); return; }
     p_fence = (PFN_fence)SDL_GL_GetProcAddress("glFenceSync");
     p_wait = (PFN_wait)SDL_GL_GetProcAddress("glClientWaitSync");
     p_delsync = (PFN_delsync)SDL_GL_GetProcAddress("glDeleteSync");

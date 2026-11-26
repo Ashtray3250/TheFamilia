@@ -125,7 +125,8 @@ static int skip_pressed(void) {
     if (fam_pad_present()) {
         fam_pad p;
         fam_pad_read(&p);
-        if (p.buttons & ((1u << FAM_PB_START) | (1u << FAM_PB_A) | (1u << FAM_PB_B))) hit = 1;
+        if (p.buttons & ((1u << FAM_PB_START) | (1u << FAM_PB_A) |
+                         (1u << FAM_PB_B) | (1u << FAM_PB_BACK))) hit = 1;
     }
     return hit;
 }

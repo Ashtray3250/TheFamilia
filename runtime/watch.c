@@ -19,6 +19,7 @@ extern const char *g_cur_import;
 static void *watch(void *arg) {
     int every = (int)(intptr_t)arg;
     static uint32_t prev[8192];
+    fprintf(stderr, "[watch] started, every %d s\n", every);
     for (;;) {
         sleep((unsigned)every);
         int n = hle_shim_count(); if (n > 8192) n = 8192;
@@ -37,7 +38,7 @@ static void *watch(void *arg) {
     return NULL;
 }
 void fam_watch_start(void) {
-    int every = fam_config_int("watch", 0);
+    int every = fam_config_int("watch", 2);   /* on by default for diagnosis */
     if (every <= 0) return;
     pthread_t t; pthread_create(&t, NULL, watch, (void *)(intptr_t)every); pthread_detach(t);
 }
