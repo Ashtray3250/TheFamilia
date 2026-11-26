@@ -245,7 +245,10 @@ void fam_native_dta_open(void) {
 }
 
 void fam_readahead_start(void) {
-    g_on = fam_config_int("readahead", 1);
+    /* Off by default on 1 GB handhelds: the read-ahead pages compete with
+     * the game's textures and the OOM killer takes the process down during
+     * the first mission. Enable explicitly with FAMILIA_READAHEAD=1. */
+    g_on = fam_config_int("readahead", 0);
     if (!g_on) { g_on = 0; return; }
     load_lists();
     g_cur = list_index("*");

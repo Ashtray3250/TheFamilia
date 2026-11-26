@@ -182,7 +182,7 @@ static int play_file(const char *path, float sx, float sy) {
                     double pts = fr->best_effort_timestamp != AV_NOPTS_VALUE ? fr->best_effort_timestamp * tb : 0.0;
                     /* wait for the frame's time; keep the sound no more than ~1.5 s ahead */
                     for (;;) {
-                        if (skip_pressed()) { if (held) { skipped = 1; break; } } else held = 1;
+                        if (skip_pressed()) { if (!held) { skipped = 1; break; } } else held = 0;
                         double now = (double)(SDL_GetTicks64() - t0) / 1000.0;
                         if (now >= pts) break;
                         SDL_Delay(2);
@@ -192,12 +192,12 @@ static int play_file(const char *path, float sx, float sy) {
         }
         av_packet_unref(pkt);
         while (sid >= 0 && ac && hle_audio_stream_queued(sid) > ac->sample_rate * 3 / 2 && !skipped) {
-            if (skip_pressed() && held) skipped = 1;
+            if (skip_pressed()) skipped = 1;
             SDL_Delay(5);
         }
     }
     /* let the last of the sound play unless skipped */
-    while (!skipped && sid >= 0 && hle_audio_stream_queued(sid) > 0) { if (skip_pressed() && held) break; SDL_Delay(10); }
+    while (!skipped && sid >= 0 && hle_audio_stream_queued(sid) > 0) { if (skip_pressed()) break; SDL_Delay(10); }
     if (sid >= 0) hle_audio_stream_close(sid);
     av_frame_free(&fr); av_packet_free(&pkt);
     sws_freeContext(sws); swr_free(&swr); free(rgba); free(pcm);
