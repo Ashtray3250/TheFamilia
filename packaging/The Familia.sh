@@ -42,6 +42,7 @@ fi
 
 # 2. Game. Saves, game config (registry), screenshots: conf/. data/ is never written.
 export FAMILIA_USER_DIR="$CONFDIR"
+export FAMILIA_UNRESOLVED_CONTINUE=1   # missed tail calls: log and carry on
 [ -f "$CONFDIR/familia.cfg" ] && source "$CONFDIR/familia.cfg"
 export FAMILIA_FPS=${FAMILIA_FPS:-1} FAMILIA_LIMIT=${FAMILIA_LIMIT:-0} FAMILIA_TEXTURES=${FAMILIA_TEXTURES:-32}
 export FAMILIA_STREAM=${FAMILIA_STREAM:-0}   # 1: GPU streaming ring (faster; the Mali driver's memory grows with it)

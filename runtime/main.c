@@ -28,7 +28,7 @@ void recomp_unimplemented(uint32_t va, const char *insn) {
  * and returns instead, for diagnosis. */
 void recomp_unresolved(uint32_t va, uint32_t from, const char *kind) {
     static int cont = -1;
-    if (cont < 0) cont = getenv("FAMILIA_UNRESOLVED_CONTINUE") != NULL;
+    if (cont < 0) { const char *e = getenv("FAMILIA_UNRESOLVED_CONTINUE"); cont = !e || atoi(e) != 0; }
     fprintf(stderr, "%s: unresolved VA 0x%08X from 0x%08X\n", kind, va, from);
     if (!cont) hle_fatal("no translated function at 0x%08X (%s from 0x%08X)", va, kind, from);
 }
