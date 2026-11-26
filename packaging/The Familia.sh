@@ -45,7 +45,7 @@ export FAMILIA_USER_DIR="$CONFDIR"
 export FAMILIA_UNRESOLVED_CONTINUE=1   # missed tail calls: log and carry on
 [ -f "$CONFDIR/familia.cfg" ] && source "$CONFDIR/familia.cfg"
 # 1 GB handhelds: keep the working set small, log memory for diagnostics.
-export FAMILIA_TEXTURES=16 FAMILIA_READAHEAD=0 FAMILIA_STATS=${FAMILIA_STATS:-1}
+export FAMILIA_TEXTURES=16 FAMILIA_READAHEAD=1 FAMILIA_READAHEAD_MB=64 FAMILIA_STATS=${FAMILIA_STATS:-1}
 export FAMILIA_FPS=${FAMILIA_FPS:-1} FAMILIA_LIMIT=${FAMILIA_LIMIT:-0}
 export FAMILIA_STREAM=${FAMILIA_STREAM:-0}   # 1: GPU streaming ring (faster; the Mali driver's memory grows with it)
 export FAMILIA_STATS=${FAMILIA_STATS:-0}     # 1: performance lines in log.txt every 5 s
