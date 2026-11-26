@@ -32,6 +32,28 @@ const char *fam_user_dir(void) { return g_user; }
 static void put32(uint8_t *b, int o, uint32_t v) { memcpy(b + o, &v, 4); }
 /* The launcher's texture choice (FAMILIA_TEXTURES=32 or 16) applied to the
  * setup value at every start: texture_true_color is byte 0x1C. */
+/* Force the cheap video options on 1 GB / Cortex-A53 hardware. They are the
+ * same values the menu calls Very Low / Low; the game keeps them in the
+ * registry between runs, so they must be applied at every start. */
+static void apply_perf_settings(void) {
+    const char *e = getenv("FAMILIA_PERF");
+    if (e && !atoi(e)) return;
+    uint8_t b[0x3F];
+    if (hle_reg_get_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b) != sizeof b) return;
+    int changed = 0, v;
+    memcpy(&v, b + 0x37, 4);
+    if (v != 0) { put32(b, 0x37, 0); changed = 1; }                            /* shadows: Very Low */
+    float lod; memcpy(&lod, b + 0x27, 4);
+    if (lod > 0.4f) { lod = 0.4f; memcpy(b + 0x27, &lod, 4); changed = 1; }    /* level of detail */
+    float dd; memcpy(&dd, b + 0x2B, 4);
+    if (dd > 0.3f) { dd = 0.3f; memcpy(b + 0x2B, &dd, 4); changed = 1; }       /* draw distance */
+    memcpy(&v, b + 0x2F, 4);
+    if (v != 0) { put32(b, 0x2F, 0); changed = 1; }                            /* in-game effects: Low */
+    memcpy(&v, b + 0x3B, 4);
+    if (v != 0) { put32(b, 0x3B, 0); changed = 1; }                            /* particles: Low */
+    if (changed) hle_reg_set_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b);
+}
+
 static void apply_texture_choice(void) {
     const char *e = getenv("FAMILIA_TEXTURES");
     if (!e) return;
@@ -44,7 +66,7 @@ static void apply_texture_choice(void) {
     fprintf(stderr, "[paths] textures: %s\n", want ? "32-bit" : "16-bit");
 }
 void fam_seed_setup_config(void) {
-    if (hle_reg_has(HKLM, MAFIA_KEY, "LS3D_setup")) { apply_texture_choice(); return; }
+    if (hle_reg_has(HKLM, MAFIA_KEY, "LS3D_setup")) { apply_texture_choice(); apply_perf_settings(); return; }
     uint8_t b[0x3F] = {0};
     b[0x00] = 0x14;                          /* layout version the game checks */
     put32(b, 0x02, 640);                     /* width  (engine default 800) */
@@ -59,6 +81,7 @@ void fam_seed_setup_config(void) {
     hle_reg_set_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b);
     fprintf(stderr, "[paths] seeded LS3D_setup (engine defaults, 640x480x32, 32-bit textures, shadows very low)\n");
     apply_texture_choice();
+    apply_perf_settings();
 }
 
 static char g_game[PATH_MAX];

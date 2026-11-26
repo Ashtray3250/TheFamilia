@@ -72,6 +72,7 @@ static sbuf g_b[MAXB];
 static uint16_t g_play[MAXB];
 static int g_nplay;
 static pthread_mutex_t g_notify_lock = PTHREAD_MUTEX_INITIALIZER;   /* [music-fix] */
+static volatile int g_notify_active;                               /* fast path */
 int hle_dsound_is_playing(uint32_t self);
 int hle_dsound_alive(uint32_t self);
 static struct { float pos[3], front[3], top[3], rolloff, dist_factor; uint32_t obj; } g_l = {
@@ -139,6 +140,7 @@ static void n_SetNotificationPositions(void) {      /* (this, count, DSBPOSITION
         s->notify[i].event = MEM32(e + 4);
     }
     s->notify_n = (uint16_t)keep;
+    if (keep) g_notify_active = 1;
     pthread_mutex_unlock(&g_notify_lock);
     RET(DS_OK, 3);
 }
@@ -153,7 +155,7 @@ static void n_SetNotificationPositions(void) {      /* (this, count, DSBPOSITION
  * after unlocking. */
 int hle_dsound_notify_fire(uint32_t slot, uint32_t from, uint32_t to, int whole,
                            uint32_t bytes, int looping, uint32_t *out, int cap) {
-    if (slot >= MAXB || !bytes || cap <= 0) return 0;
+    if (!g_notify_active || slot >= MAXB || !bytes || cap <= 0) return 0;
     sbuf *s = &g_b[slot];
     if (!s->buf || !s->notify_n) return 0;
     struct { uint32_t offset, event; } list[MAX_NOTIFY];
@@ -161,6 +163,8 @@ int hle_dsound_notify_fire(uint32_t slot, uint32_t from, uint32_t to, int whole,
     pthread_mutex_lock(&g_notify_lock);
     n = s->notify_n;
     if (n) memcpy(list, s->notify, (size_t)n * sizeof list[0]);
+    g_notify_active = 0;
+    for (int b = 0; b < MAXB; b++) if (g_b[b].buf && g_b[b].notify_n) { g_notify_active = 1; break; }
     pthread_mutex_unlock(&g_notify_lock);
     for (i = 0; i < n && k < cap; i++) {
         uint32_t off = list[i].offset, h = list[i].event;
