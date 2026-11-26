@@ -175,6 +175,10 @@ int fam_attach_dlls(void) {
     for (int i = 0; i < g_nmods; i++) {
         fam_module *m = &g_mods[i];
         if (!m->is_dll || !m->entry) continue;
+        /* rw_data.dll and IJoy.dll are data-only libraries. Their PE entry
+         * point (0x65CD in the retail DLL) lands in the middle of a jmp and
+         * is not real code; calling it faults at guest 0x93B80877. */
+        if (!strcasecmp(m->file, "rw_data.dll") || !strcasecmp(m->file, "IJoy.dll")) continue;
         uint32_t a[3] = { m->base, 1 /* DLL_PROCESS_ATTACH */, 0 };
         uint32_t ok = hle_call_guest(m->entry, 3, a);
         fprintf(stderr, "[load] %s DllMain(ATTACH) = %u\n", m->file, ok);
