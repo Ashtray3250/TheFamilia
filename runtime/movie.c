@@ -120,7 +120,14 @@ static int skip_pressed(void) {
     fam_input_pump();
     uint8_t keys[256];
     fam_input_keys(keys);
-    return (keys[0x01] | keys[0x1C] | keys[0x39]) & 0x80;    /* Esc, Enter, Space */
+    int hit = (keys[0x01] | keys[0x1C] | keys[0x39]) & 0x80;  /* Esc, Enter, Space */
+    /* The handheld has no keyboard: check the virtual Xbox pad directly. */
+    if (fam_pad_present()) {
+        fam_pad p;
+        fam_pad_read(&p);
+        if (p.buttons & ((1u << FAM_PB_START) | (1u << FAM_PB_A) | (1u << FAM_PB_B))) hit = 1;
+    }
+    return hit;
 }
 
 /* plays one file; returns 0 if it could not be opened */
