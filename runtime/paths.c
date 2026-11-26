@@ -37,8 +37,7 @@ static void apply_texture_choice(void) {
     if (!e) return;
     uint8_t b[0x3F];
     if (hle_reg_get_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b) != sizeof b) return;
-    /* 1 GB handhelds: always use 16-bit textures here. */
-    uint8_t want = 0;
+    uint8_t want = atoi(e) == 16 ? 0 : 1;
     if (b[0x1C] == want) return;
     b[0x1C] = want;
     hle_reg_set_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b);

@@ -239,6 +239,9 @@ static void pad_update(void) {
     g_pad_latch_engine = 0;
     uint8_t want[256] = {0};
     if (b & (1u << FAM_PB_START)) want[0x01] = 0x80;                 /* Start: Esc */
+    /* The game stops a cutscene on Space or Enter, in menus and in play alike.
+     * A must always produce Enter, not only while a menu is open. */
+    if (b & (1u << FAM_PB_A)) want[0x1C] = 0x80;                     /* Enter */
     if (in_menu()) {
         g_pad_latch = 0;                               /* menu presses are not replayed into play */
         int32_t lx, ly; stick(SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY, &lx, &ly);
